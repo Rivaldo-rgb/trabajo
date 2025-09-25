@@ -94,7 +94,7 @@ public class Juego {
                     System.out.println(nombre + " fue interrumpido.");
                 }
             }
-            System.out.println(nombre + " james ya terminó sus ataques.");
+            System.out.println(nombre + " ya terminó sus ataques.");
         }
     }
 
@@ -143,7 +143,7 @@ public class Juego {
         Player player = new Player(100);
         Enemy enemy = new Enemy(100);
 
-        // Se crean dos ninjas enemigos y un jugador atacante
+        // Se crean 3 enemigos y 3 jugadores
         ninja n1 = new ninja(player, "ninja", 20, 5);
         ninja n2 = new ninja(player, "ninjaDark", 15, 5);
         ninja n3 = new ninja(player, "orco", 40, 2);
@@ -176,7 +176,7 @@ public class Juego {
         if (player.estasVivo()) {
             System.out.println("El jugador sobrevivió con " + player.getvida() + " puntos de vida.");
         } else {
-            System.out.println("El jugador ha sido derrotado en la arena.");
+            System.out.println( " Ha sido derrotado en la arena.");
         }
         if (enemy.estasVivo()){
             System.out.println("El enemigo sobrevivió con " + enemy.gethp() + " puntos de vida.");
