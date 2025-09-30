@@ -1,11 +1,12 @@
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import java.util.stream.*;
 
 // Servidor simple que empareja a dos jugadores por batalla
 public class GameServer {
     // Guardamos las sesiones activas (pares de handlers)
-    private static final List<ClientHandler> waiting = new ArrayList<>();
+    private static final List<ClientHandler> waiting = Collections.synchronizedList(new ArrayList<>());
 
     public static void main(String[] args) throws IOException {
         // Puerto donde escucha el servidor
@@ -25,15 +26,15 @@ public class GameServer {
             // Guardamos en la lista de espera para emparejar
             synchronized (waiting) {
                 waiting.add(handler);
+
+                // Emparejamiento funcional usando Stream
                 if (waiting.size() >= 2) {
-                    // Emparejar los dos primeros
-                    ClientHandler a = waiting.remove(0);
-                    ClientHandler b = waiting.remove(0);
-                    a.setOpponent(b);
-                    b.setOpponent(a);
-                    // Notificar a ambos que empiezan la batalla
-                    a.sendMessage("MATCH_START");
-                    b.sendMessage("MATCH_START");
+                    List<ClientHandler> pareja = waiting.stream().limit(2).collect(Collectors.toList());
+                    waiting.removeAll(pareja);
+
+                    pareja.get(0).setOpponent(pareja.get(1));
+                    pareja.get(1).setOpponent(pareja.get(0));
+                    pareja.forEach(h -> h.sendMessage("MATCH_START"));
                 }
             }
         }

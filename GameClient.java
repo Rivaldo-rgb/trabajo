@@ -1,46 +1,49 @@
 import java.io.*;
 import java.net.*;
-import java.util.Scanner;
+import java.util.*;
+import java.util.function.Consumer;
 
 // Cliente simple que se conecta al servidor y permite enviar comandos por consola
 public class GameClient {
     public static void main(String[] args) throws IOException {
-        String host = "10.10.11.247"; // cambiar si el server está en otra máquina
+        String host = "localhost"; // cambiar si el server está en otra máquina
         int port = 5000;
 
-        Socket socket = new Socket(host, port);
-        BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-        PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+        try (
+            Socket socket = new Socket(host, port);
+            BufferedReader in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+            PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+            Scanner sc = new Scanner(System.in)
+        ) {
+            // Hilo lector para mensajes del servidor
+            new Thread(() -> in.lines().forEach(s -> System.out.println("[SERVER] " + s))).start();
 
-        // Hilo lector para mensajes del servidor
-        Thread reader = new Thread(() -> {
-            try {
-                String s;
-                while ((s = in.readLine()) != null) {
-                    System.out.println("[SERVER] " + s);
-                }
-            } catch (IOException e) {
-                System.out.println("Conexión cerrada.");
+            System.out.print("Tu nombre: ");
+            out.println("NAME:" + sc.nextLine()); // enviamos el nombre al servidor
+
+            // Menú funcional de selección de personajes
+            List<String> personajes = List.of("Vampiro", "Mago", "Caballero");
+            personajes.forEach(p -> System.out.println((personajes.indexOf(p) + 1) + ". " + p));
+            System.out.print("Opción (1-3): ");
+            int opcion = Optional.of(sc.nextLine().trim())
+                .map(Integer::parseInt)
+                .filter(i -> i >= 1 && i <= personajes.size())
+                .orElse(3);
+            out.println("CHARACTER:" + personajes.get(opcion - 1)); // enviamos el personaje al servidor
+
+            // Procesamiento funcional de comandos
+            Map<String, Consumer<PrintWriter>> comandos = new HashMap<>();
+            comandos.put("ATTACK", o -> o.println("ATTACK"));
+            comandos.put("STATUS", o -> o.println("STATUS"));
+            comandos.put("HEAL", o -> o.println("HEAL"));
+
+            // Bucle principal: leer comandos desde la consola y enviarlos al servidor
+            while (true) {
+                System.out.print("Comando (ATTACK/STATUS/EXIT/HEAL): ");
+                String cmd = sc.nextLine().trim().toUpperCase();
+                if ("EXIT".equals(cmd)) break;
+                comandos.getOrDefault(cmd, o -> o.println(cmd)).accept(out);
             }
-        });
-        reader.start();
-
-        Scanner sc = new Scanner(System.in);
-        System.out.print("Tu nombre: ");
-        String name = sc.nextLine();
-        out.println("NAME:" + name); // enviamos el nombre al servidor
-
-        // Bucle principal: leer comandos desde la consola y enviarlos al servidor
-        while (true) {
-            System.out.print("Comando (ATTACK/STATUS/EXIT/HEAL): ");
-            String cmd = sc.nextLine().trim();
-            if (cmd.equalsIgnoreCase("EXIT")) {
-                break;
-            }
-            out.println(cmd);
         }
-
-        socket.close();
-        sc.close();
     }
 }

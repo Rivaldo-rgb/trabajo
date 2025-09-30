@@ -1,5 +1,7 @@
 import java.io.*;
 import java.net.*;
+import java.util.HashMap;
+import java.util.Map;
 
 // Maneja la comunicación con un cliente (una conexión)
 public class ClientHandler extends Thread {
@@ -8,7 +10,7 @@ public class ClientHandler extends Thread {
     private PrintWriter out;
     private ClientHandler opponent; // referencia al oponente cuando esté emparejado
     private String playerName;
-    private GamePlayer player; // el jugador asociado a este handler
+    private GamePlayer player;
 
     public ClientHandler(Socket socket) throws IOException {
         this.socket = socket;
@@ -101,7 +103,15 @@ public class ClientHandler extends Thread {
                 } else if (line.equals("STATUS") && player != null) {
                     sendMessage("HP:" + player.getHp() + "/" + player.getMaxHp() + " | DAÑO:" + player.getDamage() + " | PERSONAJE: " + player.getCharacter());
                 } else {
-                    sendMessage("UNKNOWN_CMD");
+                    Map<String, Runnable> comandos = new HashMap<>();
+                    comandos.put("STATUS", () -> sendMessage("HP:" + player.getHp() + "/" + player.getMaxHp()));
+                    // ... y así para otros comandos
+
+                    if (comandos.containsKey(line)) {
+                        comandos.get(line).run();
+                    } else {
+                        sendMessage("UNKNOWN_CMD");
+                    }
                 }
             }
         } catch (IOException e) {
