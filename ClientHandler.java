@@ -1,123 +1,137 @@
 import java.io.*;
 import java.net.*;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
-// Maneja la comunicación con un cliente (una conexión)
 public class ClientHandler extends Thread {
-    private Socket socket;
-    private BufferedReader in;
-    private PrintWriter out;
-    private ClientHandler opponent; // referencia al oponente cuando esté emparejado
+    private final Socket socket;
+    private final BufferedReader in;
+    private final PrintWriter out;
+    private ClientHandler opponent;
     private String playerName;
     private GamePlayer player;
+    private final long startTime;
 
     public ClientHandler(Socket socket) throws IOException {
         this.socket = socket;
         this.in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
         this.out = new PrintWriter(socket.getOutputStream(), true);
+        this.startTime = System.currentTimeMillis();
     }
 
-    public void setOpponent(ClientHandler opp) {
-        this.opponent = opp;
-    }
-
-    // Enviar mensaje al cliente
-    public void sendMessage(String msg) {
-        out.println(msg);
-    }
+    public void setOpponent(ClientHandler opp) { this.opponent = opp; }
+    public String getPlayerName() { return playerName; }
+    public void sendMessage(String msg) { out.println(msg); }
 
     @Override
     public void run() {
         try {
             String line;
             while ((line = in.readLine()) != null) {
-                System.out.println("Recibido: " + line);
-
-                if (line.startsWith("NAME:")) {
-                    playerName = line.substring(5);
-                    sendMessage("WELCOME " + playerName);
-                } else if (line.startsWith("CHARACTER:")) {
-                    String character = line.substring(10).trim();
-                    player = new GamePlayer(playerName, character);
-                    sendMessage("CHARACTER_SELECTED " + character + " (HP:" + player.getMaxHp() + ", DAÑO:" + player.getDamage() + ")");
-                } else if (line.equals("ATTACK") && opponent != null && player != null && opponent.player != null) {
-                    // Atacar al oponente: sincronizamos para evitar condiciones de carrera
-                    synchronized (opponent) {
-                        opponent.player.takeDamage(player.getDamage());
-                        opponent.sendMessage("DAMAGE:" + player.getDamage() + " de " + player.getName() + " (" + player.getCharacter() + ")");
-                        // Mostrar en el servidor quién atacó y la vida de ambos
-                        System.out.println("[INFO] " + player.getName() + " (" + player.getCharacter() + ") atacó a " +
-                            opponent.player.getName() + " (" + opponent.player.getCharacter() + "). " +
-                            "HP atacante: " + player.getHp() + " | HP oponente: " + opponent.player.getHp());
-                        // Si el oponente muere, notificar a ambos
-                        if (!opponent.player.isAlive()) {
-                            sendMessage("YOU_WIN");
-                            opponent.sendMessage("YOU_LOSE");
-                        }
-                        // Efecto especial para el mago: quemadura
-                        if (player.getCharacter().equalsIgnoreCase("mago")) {
-                            new Thread(() -> {
-                                try {
-                                    Thread.sleep(7000); // 7 segundos
-                                    if (opponent.player.isAlive()) {
-                                        opponent.player.takeDamage(4);
-                                        opponent.sendMessage("el enemigo se resintio por la quemadura (-4 HP)");
-                                        if (!opponent.player.isAlive()) {
-                                            sendMessage("YOU_WIN");
-                                            opponent.sendMessage("YOU_LOSE");
-                                        }
-                                    }
-                                } catch (InterruptedException ignored) {}
-                            }).start();
-                        }
-                        // Efecto especial para el vampiro: curarse al atacar
-                        if (player.getCharacter().equalsIgnoreCase("vampiro")) {
-                            int before = player.getHp();
-                            player.heal(5);
-                            int healed = player.getHp() - before;
-                            if (healed > 0) {
-                                sendMessage("VAMPIRE_HEAL +" + healed + " (HP:" + player.getHp() + ")");
-                            }
-                        }
-                    }
-
-                } else if (line.equals("HEAL") && player != null) {
-                    // El vampiro no puede usar HEAL
-                    if (player.getCharacter().equalsIgnoreCase("vampiro")) {
-                        sendMessage("HEAL_PROHIBIDO: El vampiro no puede usar HEAL.");
-                    } else {
-                        // Curarse a uno mismo
-                        int before = player.getHp();
-                        player.heal(10);
-                        int healed = player.getHp() - before;
-                        if (healed > 0) {
-                            sendMessage("YOU_HEALED " + healed + " (HP:" + player.getHp() + ")");
-                            if (opponent != null && opponent.player != null) {
-                                opponent.sendMessage(player.getName() + " HEALED " + healed + " (HP:" + player.getHp() + ")");
-                            }
-                        } else {
-                            sendMessage("HEAL_FAILED (HP al máximo)");
-                        }
-                    }
-                } else if (line.equals("STATUS") && player != null) {
-                    sendMessage("HP:" + player.getHp() + "/" + player.getMaxHp() + " | DAÑO:" + player.getDamage() + " | PERSONAJE: " + player.getCharacter());
-                } else {
-                    Map<String, Runnable> comandos = new HashMap<>();
-                    comandos.put("STATUS", () -> sendMessage("HP:" + player.getHp() + "/" + player.getMaxHp()));
-                    // ... y así para otros comandos
-
-                    if (comandos.containsKey(line)) {
-                        comandos.get(line).run();
-                    } else {
-                        sendMessage("UNKNOWN_CMD");
-                    }
-                }
+                processCommand(line);
             }
         } catch (IOException e) {
             System.out.println("Error en handler: " + e.getMessage());
         } finally {
             try { socket.close(); } catch (IOException ignored) {}
         }
+    }
+
+    private void processCommand(String line) {
+        Map<String, Runnable> commands = Map.of(
+            "ATTACK", () -> Optional.ofNullable(opponent)
+                                    .filter(o -> player != null && o.player != null)
+                                    .ifPresent(this::doAttack),
+            "HEAL",   () -> Optional.ofNullable(player).ifPresent(this::doHeal),
+            "STATUS", () -> Optional.ofNullable(player).ifPresent(p ->
+                        sendMessage("HP:" + p.getHp() + "/" + p.getMaxHp() +
+                                    " | DAÑO:" + p.getDamage() +
+                                    " | PERSONAJE:" + p.getCharacter()))
+        );
+
+        if (line.startsWith("NAME:")) {
+            playerName = line.substring(5).trim();
+            sendMessage("WELCOME " + playerName);
+        } else if (line.startsWith("CHARACTER:")) {
+            String character = line.substring(10).trim();
+            player = new GamePlayer(playerName, character);
+            sendMessage("CHARACTER_SELECTED " + character +
+                " (HP:" + player.getMaxHp() + ", DAÑO:" + player.getDamage() + ")");
+        } else {
+            commands.entrySet().stream()
+                .filter(e -> line.equalsIgnoreCase(e.getKey()))
+                .findFirst()
+                .map(Map.Entry::getValue)
+                .ifPresentOrElse(Runnable::run, () -> sendMessage("UNKNOWN_CMD"));
+        }
+    }
+
+    private void doAttack(ClientHandler opp) {
+        synchronized (opp) {
+            opp.player.takeDamage(player.getDamage());
+
+            System.out.println("[SERVER] " + player.getName() + " (" + player.getCharacter() + ") atacó a "
+                + opp.player.getName() + " (" + opp.player.getCharacter() + ") "
+                + " | Daño: " + player.getDamage()
+                + " | HP Oponente: " + opp.player.getHp());
+
+            sendMessage("Has atacado a " + opp.player.getName() + " con " + player.getDamage() +
+                " de daño. (HP oponente: " + opp.player.getHp() + ")");
+            opp.sendMessage(player.getName() + " te atacó con " + player.getDamage() +
+                " de daño. (Tu HP: " + opp.player.getHp() + ")");
+
+            if (!opp.player.isAlive()) {
+                endMatch(opp);
+            }
+
+            // Efecto mago
+            if (player.getCharacter().equalsIgnoreCase("mago")) {
+                new Timer().schedule(new TimerTask() {
+                    @Override
+                    public void run() {
+                        if (opp.player.isAlive()) {
+                            opp.player.takeDamage(4);
+                            opp.sendMessage("🔥 Te afectó la quemadura (-4 HP)");
+                            sendMessage("🔥 Tu hechizo quemó a " + opp.player.getName() + " (-4 HP)");
+                            if (!opp.player.isAlive()) endMatch(opp);
+                        }
+                    }
+                }, 7000);
+            }
+
+            // Efecto vampiro
+            if (player.getCharacter().equalsIgnoreCase("vampiro")) {
+                int before = player.getHp();
+                player.heal(5);
+                int healed = player.getHp() - before;
+                if (healed > 0) {
+                    sendMessage("🧛 Recuperaste +" + healed + " HP (HP actual: " + player.getHp() + ")");
+                }
+            }
+        }
+    }
+
+    private void doHeal(GamePlayer p) {
+        if (p.getCharacter().equalsIgnoreCase("vampiro")) {
+            sendMessage("HEAL_PROHIBIDO: El vampiro no puede usar HEAL.");
+            return;
+        }
+        int before = p.getHp();
+        p.heal(10);
+        int healed = p.getHp() - before;
+        if (healed > 0) {
+            sendMessage("YOU_HEALED " + healed + " (HP:" + p.getHp() + ")");
+            Optional.ofNullable(opponent)
+                .map(o -> o.player)
+                .ifPresent(op -> opponent.sendMessage(p.getName() + " HEALED " + healed + " (HP:" + p.getHp() + ")"));
+        } else {
+            sendMessage("HEAL_FAILED (HP al máximo)");
+        }
+    }
+
+    private void endMatch(ClientHandler opp) {
+        sendMessage("🏆 GANASTE contra " + opp.player.getName());
+        opp.sendMessage("💀 PERDISTE contra " + player.getName());
+        int duration = (int) ((System.currentTimeMillis() - startTime) / 1000);
+        GameServer.addMatchResult(new MatchResults(player.getName(), player.getDamage(), duration));
     }
 }

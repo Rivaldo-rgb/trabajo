@@ -1,42 +1,68 @@
 import java.io.*;
 import java.net.*;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.*;
 
 // Servidor simple que empareja a dos jugadores por batalla
 public class GameServer {
-    // Guardamos las sesiones activas (pares de handlers)
-    private static final List<ClientHandler> waiting = Collections.synchronizedList(new ArrayList<>());
+    // Lista concurrente para jugadores esperando
+    private static final List<ClientHandler> waiting = new CopyOnWriteArrayList<>();
+    // Resultados acumulados
+    private static final List<MatchResults> resultados = new CopyOnWriteArrayList<>();
 
-    public static void main(String[] args) throws IOException {
-        // Puerto donde escucha el servidor
+    public static void main(String[] args) {
         int port = 5000;
-        ServerSocket serverSocket = new ServerSocket(port);
-        System.out.println("Servidor iniciado en puerto " + port);
+        try (ServerSocket serverSocket = new ServerSocket(port)) {
+            System.out.println("Servidor iniciado en puerto " + port);
 
-        while (true) {
-            // Espera conexiones entrantes
-            Socket clientSocket = serverSocket.accept();
-            System.out.println("Nuevo cliente conectado: " + clientSocket.getRemoteSocketAddress());
+            while (true) {
+                Socket clientSocket = serverSocket.accept();
+                System.out.println("Nuevo cliente conectado: " + clientSocket.getRemoteSocketAddress());
 
-            // Crea un handler para gestionar ese cliente en un hilo separado
-            ClientHandler handler = new ClientHandler(clientSocket);
-            handler.start(); // start() porque ClientHandler extiende Thread
+                ClientHandler handler = new ClientHandler(clientSocket);
+                handler.start();
 
-            // Guardamos en la lista de espera para emparejar
-            synchronized (waiting) {
-                waiting.add(handler);
-
-                // Emparejamiento funcional usando Stream
-                if (waiting.size() >= 2) {
-                    List<ClientHandler> pareja = waiting.stream().limit(2).collect(Collectors.toList());
-                    waiting.removeAll(pareja);
-
-                    pareja.get(0).setOpponent(pareja.get(1));
-                    pareja.get(1).setOpponent(pareja.get(0));
-                    pareja.forEach(h -> h.sendMessage("MATCH_START"));
-                }
+                emparejar(handler);
             }
+        } catch (IOException e) {
+            System.err.println("Error en servidor: " + e.getMessage());
         }
+    }
+
+    private static void emparejar(ClientHandler handler) {
+        waiting.add(handler);
+
+        // Intentar formar pares
+        if (waiting.size() >= 2) {
+            List<ClientHandler> par = waiting.stream()
+                                             .limit(2)
+                                             .collect(Collectors.toList());
+
+            waiting.removeAll(par);
+
+            ClientHandler a = par.get(0);
+            ClientHandler b = par.get(1);
+
+            a.setOpponent(b);
+            b.setOpponent(a);
+
+            a.sendMessage("MATCH_START contra " + Optional.ofNullable(b.getPlayerName()).orElse("Jugador"));
+            b.sendMessage("MATCH_START contra " + Optional.ofNullable(a.getPlayerName()).orElse("Jugador"));
+        }
+    }
+
+    public static synchronized void addMatchResult(MatchResults result) {
+        resultados.add(result);
+        System.out.println(result);
+
+        StatsProcessor stats = new StatsProcessor(resultados);
+
+        // Declarativo con Stream
+        Stream.of(
+            "📊 Ranking actual: " + stats.getRanking(),
+            "📊 Promedio daño: " + stats.getPromedioDaño(),
+            "📊 Promedio duración: " + stats.getPromedioDuracion() + "s"
+        ).forEach(System.out::println);
     }
 }
